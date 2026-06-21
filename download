@@ -1,0 +1,12 @@
+# Fuzzer output files (from simple-dirb.sh)
+dirb_results_*.txt
+
+# Wordlists you might keep locally but not want committed
+*.wordlist
+wordlists/
+
+# General
+*.log
+.env
+.DS_Store
+*.swp
