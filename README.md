@@ -86,7 +86,8 @@ sudo cp nofuzz.sh /usr/local/bin/nofuzz
 | `-s` | `--sample N` | Only send the first N words from the built path list |
 | `-E` | `--hide-errors` | Don't print connection-error lines to the terminal |
 | `-W` | `--hide-timeouts` | Don't print timeout lines to the terminal |
-| `-R` | `--retest` | Retest mode - treat the wordlist arg as a saved retry file |
+| `-R` | `--retest` | Retest mode — treat the wordlist arg as a saved retry file |
+| `-r` | `--auto-retest [N]` | Auto-retest errors/timeouts in this same run, up to N passes (default 1) |
 | `-h` | `--help` | Show the help menu and exit |
 
 > `-E`/`-W` only affect what's printed to your screen. Failed paths are **always** logged
