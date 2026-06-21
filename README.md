@@ -1,94 +1,183 @@
-# Nofuzz
+# nofuzz
 
-A minimal, dependency-light directory/file brute forcer built on `curl` and
-`xargs`. No Go, no Python, no third-party libraries - just bash and core
-utils. Useful when you need a fast sanity check on a host without pulling in
-a heavier tool like ffuf or gobuster.
+A minimal, transparent, curl-based directory/file brute forcer for web targets.
 
-## Why Nofuzz
+No hidden matcher state, no silent filtering logic you can't see, no "magic" wordlist
+preprocessing. Every request nofuzz sends, and the raw result behind it, is visible to you.
 
-Built after running into cases where popular fuzzing tools gave zero output
-when used with a custom wordlist, even though manually testing the same paths
-in a browser turned up live 200/403/404 responses. Switching to the tool's
-own default wordlist would produce output again, but the custom wordlist
-case kept returning nothing.
+## Why nofuzz exists
 
-Nofuzz uses a simple curl-based approach with no hidden matcher/filter state,
-so you can always see exactly what's being requested and why a result shows
-or doesn't.
+Built after repeatedly hitting cases where popular fuzzing tools returned **zero output**
+when given a custom wordlist - even though manually requesting the exact same paths in a
+browser turned up live `200`/`403`/`404` responses. Switching back to the tool's own
+default wordlist would make output reappear; the custom wordlist case kept returning
+nothing, with no clear indication of why.
+
+nofuzz takes the opposite approach: it's a thin, auditable wrapper around `curl`. There's
+no internal scoring, no auto-calibration, no baseline-response heuristics deciding what
+counts as "interesting" behind your back. If a request goes out, you can see it. If a
+result is hidden, it's because *you* told it to hide that exact status code - nothing
+else.
+
+## Features
+
+- Curl-based requests - uses the same HTTP client you already trust and debug with
+- Custom wordlists, with optional extension appending (`-e php,bak,old`)
+- Status code filtering: exclude (`-x`) or match-only (`-m`)
+- Concurrent requests via `xargs -P`, with a configurable thread count
+- Per-request timeout and optional delay (basic rate-limit friendliness)
+- Custom HTTP method, User-Agent, redirect following, and `-k` for self-signed/internal
+  TLS certs
+- Sampling mode (`-s N`) to test a subset of a huge wordlist before committing to a full run
+- **Error/timeout filtering** - hide connection-error or timeout lines from the terminal
+  without losing them
+- **Automatic retry log** - every failed request (timeout or connection error) is written
+  to a `nofuzz_retry_<timestamp>.txt` file, so a flaky target or a too-aggressive timeout
+  doesn't mean lost coverage
+- **Retest mode** (`-R`) - feed that retry file straight back into nofuzz to re-check only
+  what failed, typically with a longer timeout or fewer threads
+
+## Requirements
+
+- `bash` (4+)
+- `curl`
+- Standard coreutils: `awk`, `xargs`, `flock`, `mktemp` (present by default on virtually
+  every Linux distro and macOS with GNU coreutils / `flock` available)
+
+No other dependencies. Nothing to `pip install`, no Go binary to fetch.
+
+## Installation
+
+```bash
+git clone https://github.com/<your-username>/nofuzz.git
+cd nofuzz
+chmod +x nofuzz.sh
+```
+
+Optionally drop it somewhere on your `$PATH`:
+
+```bash
+sudo cp nofuzz.sh /usr/local/bin/nofuzz
+```
 
 ## Usage
 
 ```bash
-chmod +x nofuzz.sh
-./nofuzz.sh <base_url> <wordlist_file> [extensions]
+./nofuzz.sh <base_url> <wordlist_file> [options]
+./nofuzz.sh -h | --help
 ```
 
-**Example:**
-```bash
-./nofuzz.sh https://target.com/ /usr/share/wordlists/dirb/common.txt "php,js,bak"
-```
+### Options
 
-This tests every word in the wordlist as a path, and additionally tests
-`word.php`, `word.js`, `word.bak` for each entry if extensions are given.
-
-## Options (environment variables)
-
-| Variable | Default | Description |
+| Flag | Long form | Description |
 |---|---|---|
-| `THREADS` | `10` | Number of parallel `curl` workers (`xargs -P`) |
-| `DELAY` | `0` | Seconds to sleep after each request, per worker |
-| `TIMEOUT` | `10` | Max seconds per request (`curl --max-time`) |
-| `USER_AGENT` | `Mozilla/5.0 ... curl-dirb/1.0` | Custom User-Agent string |
+| `-e` | `--ext EXT1,EXT2` | Extensions to append (skips a word if it already ends in that ext) |
+| `-t` | `--threads N` | Concurrent workers (default `10`) |
+| `-d` | `--delay SEC` | Delay per request, applied per worker (default `0`) |
+| `-T` | `--timeout SEC` | Per-request timeout in seconds (default `10`) |
+| `-A` | `--user-agent STR` | Custom User-Agent string |
+| `-X` | `--method METHOD` | HTTP method (default `GET`) |
+| `-x` | `--exclude-status CODES` | Comma list of status codes to hide, e.g. `403,404` |
+| `-m` | `--match-status CODES` | Comma list of status codes to *only* show (overrides `-x`) |
+| `-L` | `--follow-redirects` | Follow redirects (`curl -L`) |
+| `-k` | `--insecure` | Skip TLS certificate verification |
+| `-s` | `--sample N` | Only send the first N words from the built path list |
+| `-E` | `--hide-errors` | Don't print connection-error lines to the terminal |
+| `-W` | `--hide-timeouts` | Don't print timeout lines to the terminal |
+| `-R` | `--retest` | Retest mode - treat the wordlist arg as a saved retry file |
+| `-h` | `--help` | Show the help menu and exit |
 
-**Example with tuning:**
+> `-E`/`-W` only affect what's printed to your screen. Failed paths are **always** logged
+> to the retry file regardless of these flags - they only control terminal noise, not
+> coverage.
+
+### Output files
+
+Every run produces (in the current directory):
+
+- **`nofuzz_results_<timestamp>.txt`** - every request that passed your `-x`/`-m` filter,
+  one line per hit: status code, response size, response time, full URL.
+- **`nofuzz_retry_<timestamp>.txt`** - paths that timed out or errored (connection refused,
+  DNS failure, TLS error, etc.), one path per line. Deleted automatically if nothing
+  failed.
+
+## Examples
+
+Basic scan with two extensions and 20 threads:
+
 ```bash
-THREADS=20 DELAY=0.5 TIMEOUT=5 ./nofuzz.sh https://target.com/ wordlist.txt
+./nofuzz.sh https://target.com wordlist.txt -e php,bak -t 20
 ```
 
-## Output
+Only show `200` and `500` responses, follow redirects, and keep the terminal quiet about
+errors/timeouts (they're still logged):
 
-Every response (except connection failures/timeouts) is printed to the
-terminal and appended to a timestamped file in the current directory:
-
-```
-dirb_results_YYYYMMDD_HHMMSS.txt
+```bash
+./nofuzz.sh https://target.com wordlist.txt -m 200,500 -L -E -W
 ```
 
-Each line follows the format:
+Sample 500 entries from a huge wordlist first, skipping TLS verification on an internal host:
+
+```bash
+./nofuzz.sh https://internal.local wordlist.txt -s 500 -k
 ```
-[<http_code>] <size_in_bytes>B <response_time>s <full_url>
+
+Hide noisy 403/404s, use a custom User-Agent, 5 threads with a small delay to stay polite
+on a rate-limited target:
+
+```bash
+./nofuzz.sh https://target.com wordlist.txt -x 403,404 -A "Mozilla/5.0 research-scan" -t 5 -d 0.5
 ```
 
-Connection failures/timeouts print as `[ERR ]` to the terminal only - they are
-**not** written to the results file.
+## Retesting failed requests
 
-## Requirements
+A normal run always logs failed paths to a retry file, whether or not anything succeeded:
 
-Just `bash` and `curl` - both present on virtually every Linux/macOS system by
-default. No installation needed.
+```
+Retry file: nofuzz_retry_20260622_153000.txt (37 entries)
+Retest with: ./nofuzz.sh https://target.com nofuzz_retry_20260622_153000.txt -R
+```
 
-## Notes & limitations
+Point nofuzz back at that file with `-R` to re-check only what failed - useful on flaky
+targets, WAF/rate-limit throttling, or after bumping the timeout:
 
-- No automatic filtering of common false positives (e.g. a wildcard `200` on
-  every path for SPAs/custom 404 pages) - review results manually or pipe
-  through `grep`/`awk` to filter by code or size.
-- `DELAY` is applied per worker, not globally - with `THREADS=10` and
-  `DELAY=1`, effective request rate is still up to 10 req/s, not 1 req/s.
-- No recursion - only tests the wordlist against the single base URL given.
-- Trailing slash on the base URL is normalized automatically if missing.
+```bash
+./nofuzz.sh https://target.com nofuzz_retry_20260622_153000.txt -R -T 20 -t 5
+```
 
-## Disclaimer
+In retest mode, the wordlist file is used as-is (no extension building, no dedup logic
+beyond removing exact duplicate lines) - it's expected to already be a flat list of paths,
+which is exactly the format the retry file is written in.
 
-This tool is intended for use only against systems and assets you are
-explicitly authorized to test - for example, targets in scope of a bug bounty
-or VDP program you're enrolled in, or infrastructure you own. See
-[DISCLAIMER.md](./DISCLAIMER.md) for the full statement.
+## How it decides pass/fail/error
 
-## Contributing
+For every path, nofuzz sends one `curl` request with `--max-time <timeout>` and reads back
+the HTTP status code, response size, and response time via `curl -w`.
 
-Issues and PRs welcome - see [CONTRIBUTING.md](./CONTRIBUTING.md).
+- If curl's exit code is `28` (operation timeout), the request is logged as `[TIMEOUT]`.
+- If curl fails for any other reason (connection refused, DNS failure, TLS error, etc.) or
+  returns no status code, it's logged as `[ERR ]` along with curl's exit code.
+- Both cases are written to the retry file. Neither is silently dropped.
+- Otherwise the status code is checked against `-m`/`-x` and, if it passes, printed and
+  appended to the results file.
+
+There's no response-size baseline, no "this looks like a soft-404 page" heuristic, and no
+automatic filtering beyond what you explicitly configure with `-x`/`-m`. What you see is
+what curl actually got back.
+
+## A note on scope and authorization
+
+nofuzz sends real HTTP requests to whatever target you point it at. Only use it against
+systems you're authorized to test - your own infrastructure, or targets explicitly in
+scope under a bug bounty program or other written authorization. You are responsible for
+how you use this tool.
 
 ## License
 
-[MIT](./LICENSE)
+MIT - see [LICENSE](LICENSE).
+
+## Contributing
+
+Issues and PRs welcome. The goal of this project is to stay small, dependency-free, and
+fully transparent about what it's doing - please keep that in mind for any feature
+proposals (no hidden heuristics, no opaque "smart" filtering).
