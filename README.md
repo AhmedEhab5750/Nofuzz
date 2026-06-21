@@ -5,13 +5,6 @@ A minimal, dependency-light directory/file brute forcer built on `curl` and
 utils. Useful when you need a fast sanity check on a host without pulling in
 a heavier tool like ffuf or gobuster.
 
-# Nofuzz
-
-A minimal, dependency-light directory/file brute forcer built on `curl` and
-`xargs`. No Go, no Python, no third-party libraries - just bash and core
-utils. Useful when you need a fast sanity check on a host without pulling in
-a heavier tool like ffuf or gobuster.
-
 ## Why Nofuzz
 
 Built after running into cases where popular fuzzing tools gave zero output
